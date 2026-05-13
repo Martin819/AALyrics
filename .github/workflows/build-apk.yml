@@ -1,0 +1,91 @@
+name: Build APK
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to publish the rolling "latest" release
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+
+      - name: Generate Gradle wrapper jar
+        run: gradle wrapper --gradle-version 8.7
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Stage APK files
+        id: stage
+        run: |
+          mkdir -p out
+          SHORT="${GITHUB_SHA::7}"
+          # SHA-stamped copy for traceability in artifacts
+          cp app/build/outputs/apk/debug/app-debug.apk "out/aalyrics-debug-${SHORT}.apk"
+          # Constant-name copy so the rolling release URL is stable for mobile bookmarks
+          cp app/build/outputs/apk/debug/app-debug.apk "out/aalyrics-debug-latest.apk"
+          echo "sha_apk=out/aalyrics-debug-${SHORT}.apk" >> "$GITHUB_OUTPUT"
+          echo "short=${SHORT}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aalyrics-debug-${{ steps.stage.outputs.short }}
+          path: out/aalyrics-debug-*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # Rolling release that ALWAYS points at the most recent successful build.
+      # We only publish on real pushes (not on PR pre-merge builds) to avoid
+      # noise. The release URL is stable, so you can bookmark
+      #   https://github.com/<owner>/<repo>/releases/download/latest/aalyrics-debug-latest.apk
+      # on your phone and just refresh it after every push.
+      - name: Publish rolling "latest" release
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Latest debug build"
+          body: |
+            Auto-built debug APK.
+
+            * commit: `${{ github.sha }}`
+            * branch: `${{ github.ref_name }}`
+            * triggered by: ${{ github.event_name }}
+
+            Install on phone: open the link to `aalyrics-debug-latest.apk`
+            below in your mobile browser and confirm "Install unknown app".
+            The debug build is signed with the standard Android debug key.
+          files: |
+            out/aalyrics-debug-latest.apk
+            out/aalyrics-debug-${{ steps.stage.outputs.short }}.apk
+          prerelease: true
+          make_latest: "false"

@@ -25,6 +25,28 @@ gradle wrapper --gradle-version 8.7
 
 APK najdete v `app/build/outputs/apk/debug/`.
 
+### Stažení APK z CI (na mobil)
+
+Workflow `.github/workflows/build-apk.yml` po každém pushi do libovolné
+větve (a po každém manuálním spuštění) vytvoří debug APK. K dispozici jsou
+**dva způsoby stažení**:
+
+1. **Rolling release `latest`** — workflow přesune tag `latest` na poslední
+   úspěšný build. Stabilní URL pro mobil:
+   ```
+   https://github.com/<owner>/<repo>/releases/download/latest/aalyrics-debug-latest.apk
+   ```
+   Otevřete v mobilním prohlížeči, potvrďte instalaci z neznámého zdroje.
+   Release také obsahuje SHA-otagovanou variantu pro dohledatelnost.
+
+2. **Workflow artifact** — v záložce *Actions* běhu workflow je k dispozici
+   `aalyrics-debug-<sha>` jako zip s APK uvnitř (retence 30 dní). Vhodné
+   pro PR buildy, kde se rolling release neaktualizuje.
+
+PR buildy se buildí a uploadují jen jako artifact (release se přesouvá
+jen na opravdové pushe / `workflow_dispatch`), aby `latest` tag držel
+mergnutý stav.
+
 Po prvním spuštění aplikace **vyžaduje povolení čtení notifikací** — bez něj
 nedokáže číst MediaSession Spotify / YT Music. Aplikace na obrazovku
 *Nastavení* nabízí tlačítko, které otevře přímo systémové menu.
