@@ -10,3 +10,7 @@
 local.properties
 *.jks
 *.keystore
+# Exception: the debug keystore is intentionally committed so all CI /
+# local builds share the same signing key. Debug keystores carry no
+# secrets — see app/build.gradle.kts.
+!app/debug.keystore

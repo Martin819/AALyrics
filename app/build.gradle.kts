@@ -21,6 +21,20 @@ android {
         vectorDrawables { useSupportLibrary = true }
     }
 
+    signingConfigs {
+        // Stable debug keystore committed to the repo so every CI / local
+        // debug build is signed with the SAME key. This matters on Android
+        // 13+: "restricted permissions" like notification-listener access
+        // are gated behind "Allow restricted settings" for sideloaded apps,
+        // and the OS resets that exception whenever the signing key changes.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -32,6 +46,7 @@ android {
         debug {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
