@@ -117,12 +117,23 @@ class MediaSessionRepository @Inject constructor(
             )
         }?.takeIf { it.isValid }
 
+        // PlaybackState.lastPositionUpdateTime is reported in SystemClock.elapsedRealtime()
+        // units (since boot). Our domain PlaybackState.updatedAt is wall-clock
+        // (System.currentTimeMillis()). Convert here so the domain stays Android-free.
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        val updatedAtWall = if (state != null && state.lastPositionUpdateTime > 0L) {
+            nowWall - (nowElapsed - state.lastPositionUpdateTime).coerceAtLeast(0L)
+        } else {
+            nowWall
+        }
+
         _state.value = PlaybackState(
             song = song,
-            positionMs = state?.position ?: 0L,
+            positionMs = (state?.position ?: 0L).coerceAtLeast(0L),
             isPlaying = state?.state == SysPlaybackState.STATE_PLAYING,
             durationMs = song?.durationMs ?: 0L,
-            updatedAt = if (state != null) state.lastPositionUpdateTime else System.currentTimeMillis(),
+            updatedAt = updatedAtWall,
         )
     }
 
