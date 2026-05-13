@@ -63,7 +63,11 @@
             </intent-filter>
         </service>
 
-        <!-- Foreground media service exposed to Android Auto via MediaLibraryService -->
+        <!-- Foreground service that holds the MediaSession we use ON THE PHONE
+             (notification, observing playback from Spotify / YT Music). We do
+             NOT expose this to Android Auto — see automotive_app_desc.xml — because
+             we don't actually play audio and AA's media template requires playable
+             items. Lyrics in AA are delivered via LyricsCarAppService below. -->
         <service
             android:name=".service.KaraokeMediaService"
             android:exported="true"
@@ -74,14 +78,12 @@
             </intent-filter>
         </service>
 
-        <!-- Car App Service: provides a CUSTOM multi-line lyrics screen on Android Auto.
-             This is the workaround for the single-line metadata limitation. The Car App
-             Library renders templates we declare here (LongMessageTemplate / PaneTemplate)
-             alongside the standard media UI provided by KaraokeMediaService. -->
+        <!-- Car App Service: the SOLE Android Auto surface. Provides the
+             custom multi-line karaoke screen via Car App Library
+             (PaneTemplate / LongMessageTemplate). -->
         <service
             android:name=".service.car.LyricsCarAppService"
-            android:exported="true"
-            android:foregroundServiceType="connectedDevice">
+            android:exported="true">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
                 <category android:name="androidx.car.app.category.IOT" />

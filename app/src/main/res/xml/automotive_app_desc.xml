@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  We only expose a templated Car App (LyricsCarAppService) to Android Auto.
+  The "media" use case is intentionally omitted: this app does not play
+  audio, it just observes another app's MediaSession to fetch and display
+  lyrics — so a media-browse tree would either need fake "playable" items
+  (which produce "Could not load your selection" when tapped, since we
+  have no audio source) or a stub silent-audio Player. Both feel worse
+  than just routing the user to the templated multi-line lyrics screen
+  via AA "Apps".
+-->
 <automotiveApp>
-    <uses name="media" />
     <uses name="template" />
 </automotiveApp>

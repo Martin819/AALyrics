@@ -99,7 +99,7 @@ app/
                             │                  ┌─────────┬──────────┴───────────┐
                             ▼                  ▼         ▼                      ▼
                        SyncedLyrics       KaraokeScreen  KaraokeMediaService    LyricsCarScreen
-                                          (Compose)      (MediaSession → AA)    (CarAppLib → AA)
+                                          (Compose)      (notifikace, phone)    (CarAppLib → AA)
 ```
 
 Všechny tři "konzumenty" stavu (Compose UI, Media3 session, CarAppService)
@@ -111,24 +111,33 @@ stejný řádek textu.
 ## Android Auto — jak obejít omezení jednoho řádku
 
 Standardní cesta pro media aplikace v Android Auto je
-`MediaBrowserService` + `MediaSession` (v této aplikaci
-`KaraokeMediaService`). Auto rendruje jeho metadata vlastním fixním layoutem
-a zobrazí pouze jeden řádek subtitle/description — víc tam dostat nelze.
+`MediaBrowserService` + `MediaSession`. Auto rendruje jeho metadata
+vlastním fixním layoutem a zobrazí jen jeden řádek subtitle / description
+— víc tam dostat nelze. Navíc tato cesta předpokládá, že naše aplikace
+umí hrát audio: jakmile uživatel klikne na položku, Auto pošle
+`play` našemu Playeru. My ale audio nevlastníme — jen pozorujeme
+MediaSession Spotify / YT Music — takže by každé kliknutí skončilo
+`"Could not load your selection"`.
 
-**Aplikace proto vedle media service registruje druhý "vchod" do auta:**
-`LyricsCarAppService`, postavený na **Car App Library** (`androidx.car.app`).
-Tato knihovna je druhý oficiálně podporovaný způsob doručení UI do
-Android Auto a umožňuje deklarovat tzv. templates, mezi nimiž jsou
-`PaneTemplate` a `LongMessageTemplate` schopné zobrazit větší blok textu.
+**Aplikace proto v Android Auto vystavuje pouze "templated" vchod:**
+`LyricsCarAppService`, postavený na **Car App Library**
+(`androidx.car.app`). Tato knihovna je druhý oficiálně podporovaný
+způsob doručení UI do Android Auto a umožňuje deklarovat templates,
+mezi nimiž jsou `PaneTemplate` a `LongMessageTemplate` schopné zobrazit
+větší blok textu.
 
-V Auto pak uživatel uvidí dvě dlaždice:
+V Auto launcheru najdete jedinou dlaždici:
 
-* **Media** (řízeno `KaraokeMediaService`) — standardní přehrávač
-  s tlačítky play/pauza/skip a jedním řádkem textu.
-* **AA Lyrics** (řízeno `LyricsCarAppService`) — vlastní obrazovka s
-  okolím aktuálního řádku (do 6 řádků zvýrazněných v `PaneTemplate`).
-  Při velmi dlouhých textech přepneme na `LongMessageTemplate` který
-  v Auto poskytne scrollovatelný blok textu.
+* **AA Lyrics** (řízeno `LyricsCarAppService`) v sekci *Apps* — vlastní
+  obrazovka s okolím aktuálního řádku (do 6 řádků zvýrazněných v
+  `PaneTemplate`, aktivní řádek tučně a barevně). Při velmi dlouhých
+  textech přepneme na `LongMessageTemplate`, který v Auto poskytne
+  scrollovatelný blok textu.
+
+`KaraokeMediaService` (MediaLibraryService) je sice v projektu pořád,
+ale jen pro **phone-side** účely — drží foreground proces a zobrazuje
+notifikaci s aktuálním řádkem. `automotive_app_desc.xml` opt-in pro
+`media` use case je vypnut, takže AA ho neprobuje.
 
 `LyricsCarScreen` se přihlásí k `LyricsController.state` a při změně
 aktivního řádku zavolá `invalidate()` — host Auto si template znovu
@@ -138,16 +147,10 @@ vyžádá. Refresh frekvenci nicméně limituje samo Auto kvůli rozptylování
 což je v karaoke kontextu naprosto použitelné. V parkujícím stavu Auto
 dovolí i `LongMessageTemplate`, který zobrazí komplet text.
 
-Manifest deklaruje obě služby:
+Manifest deklaruje jen CarAppService pro AA (Media service zůstává jen
+pro phone-side use):
 
 ```xml
-<service android:name=".service.KaraokeMediaService" ...>
-    <intent-filter>
-        <action android:name="androidx.media3.session.MediaLibraryService"/>
-        <action android:name="android.media.browse.MediaBrowserService"/>
-    </intent-filter>
-</service>
-
 <service android:name=".service.car.LyricsCarAppService" ...>
     <intent-filter>
         <action android:name="androidx.car.app.CarAppService"/>
@@ -156,14 +159,23 @@ Manifest deklaruje obě služby:
 </service>
 ```
 
-A `automotive_app_desc.xml` deklaruje obě "uses":
+A `automotive_app_desc.xml` přihlašuje pouze `template` use case:
 
 ```xml
 <automotiveApp>
-    <uses name="media"/>
     <uses name="template"/>
 </automotiveApp>
 ```
+
+### Jak aplikaci v Auto poprvé najít
+
+Android Auto schovává sideloaded aplikace. Aby se *AA Lyrics* v
+launcheru ukázala:
+
+1. *Settings → Apps → Android Auto → Open settings → Version* (10× klik)
+2. Vpravo nahoře 3 tečky → *Developer settings → Unknown sources* zapnout
+3. Force-stop Android Auto, znovu otevřít → v *Apps* sekci se objeví
+   "AA Lyrics".
 
 > **Pozn.:** Druhá služba zde běží v kategorii `IOT`, která je ze všech
 > kategorií Car App Library nejméně restriktivní a nevyžaduje žádné
