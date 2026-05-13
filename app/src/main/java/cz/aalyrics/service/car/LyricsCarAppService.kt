@@ -4,7 +4,6 @@ import androidx.car.app.CarAppService
 import androidx.car.app.Session
 import androidx.car.app.SessionInfo
 import androidx.car.app.validation.HostValidator
-import dagger.hilt.android.AndroidEntryPoint
 
 /**
  * ===== Android Auto multi-line lyrics workaround =====
@@ -16,18 +15,15 @@ import dagger.hilt.android.AndroidEntryPoint
  *
  * To display the full karaoke text (with the active line highlighted) we
  * register this CarAppService — built on the Car App Library
- * (androidx.car.app). The library is the SECOND officially-supported way of
- * delivering UI to Android Auto and it lets us use a [PaneTemplate] /
- * [LongMessageTemplate] which can show many rows of text on screen at once.
+ * (androidx.car.app). The library lets us use [PaneTemplate] /
+ * [LongMessageTemplate] which can show many rows of text on screen at
+ * once.
  *
- * In Android Auto the user sees both surfaces:
- *  - Standard "Media" entry → KaraokeMediaService (play/pause/skip)
- *  - "AA Lyrics" entry      → THIS service (multi-line lyrics screen)
- *
- * Both surfaces observe the SAME LyricsController state via Hilt, so they
- * are always in sync with the song playing on Spotify / YT Music.
+ * The session resolves the LyricsController via Hilt's EntryPoint at first
+ * onCreateScreen() — no @AndroidEntryPoint here because we don't inject
+ * directly into the service, and adding it has historically caused some
+ * AA hosts to skip the binding.
  */
-@AndroidEntryPoint
 class LyricsCarAppService : CarAppService() {
 
     override fun createHostValidator(): HostValidator =
@@ -36,3 +32,4 @@ class LyricsCarAppService : CarAppService() {
     override fun onCreateSession(sessionInfo: SessionInfo): Session = LyricsCarSession()
     override fun onCreateSession(): Session = LyricsCarSession()
 }
+
