@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AA Lyrics</string>
+    <string name="notification_listener_label">AA Lyrics — Detekce hudby</string>
+
+    <string name="state_idle">Čekám na hudbu…</string>
+    <string name="state_recognising">Rozpoznávám…</string>
+    <string name="state_recognised">Nalezeno: %1$s – %2$s</string>
+    <string name="state_not_found">Skladba nenalezena</string>
+    <string name="state_loading_lyrics">Stahuji text…</string>
+
+    <string name="tab_karaoke">Karaoke</string>
+    <string name="tab_search">Hledat</string>
+    <string name="tab_settings">Nastavení</string>
+
+    <string name="search_artist">Interpret</string>
+    <string name="search_title">Název skladby</string>
+    <string name="search_action">Hledat</string>
+    <string name="search_save">Uložit do cache</string>
+
+    <string name="settings_offset">Korekce synchronizace (ms)</string>
+    <string name="settings_prefer_synced">Preferovat synchronizovaný text</string>
+    <string name="settings_clear_cache">Vymazat cache textů</string>
+    <string name="settings_notification_permission">Přístup k notifikacím</string>
+    <string name="settings_notification_grant">Otevřít systémové nastavení</string>
+    <string name="settings_notification_granted">Uděleno</string>
+    <string name="settings_notification_missing">Nenastaveno</string>
+    <string name="settings_aa_info_title">Android Auto</string>
+    <string name="settings_aa_info_body">Aplikace přidá v Android Auto vedle standardního přehrávače obrazovku \"Lyrics\", která umí zobrazit více řádků textu najednou. Standardní karusel přehrávače má jeden řádek (omezení AA).</string>
+
+    <string name="permission_request_title">Aplikace potřebuje přístup k notifikacím</string>
+    <string name="permission_request_body">Pro rozpoznání aktuální skladby z YouTube Music a Spotify je potřeba povolit čtení notifikací.</string>
+    <string name="permission_grant">Udělit</string>
+
+    <string name="manual_search_open">Vyhledat ručně</string>
+    <string name="sync_minus">−5 s</string>
+    <string name="sync_plus">+5 s</string>
+
+    <string name="car_app_name">AA Lyrics</string>
+    <string name="car_now_playing">Právě hraje</string>
+    <string name="car_no_lyrics">Text není k dispozici</string>
+    <string name="car_no_song">Nic nehraje</string>
+
+    <string name="notification_channel_name">Karaoke synchronizace</string>
+    <string name="notification_channel_desc">Zobrazení aktuálního řádku textu</string>
+    <string name="notification_title_idle">AA Lyrics běží</string>
+    <string name="notification_text_idle">Čeká na přehrávání hudby</string>
+</resources>
