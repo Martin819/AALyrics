@@ -20,7 +20,6 @@ import cz.aalyrics.domain.model.SyncedLyrics
 object LrcParser {
 
     private val TIMESTAMP_REGEX = Regex("""\[(\d{1,3}):(\d{1,2})([.:](\d{1,3}))?]""")
-    private val METADATA_KEYS = setOf("ti", "ar", "al", "by", "length", "re", "ve", "au")
     private val OFFSET_REGEX = Regex("""\[offset:\s*([+-]?\d+)]""", RegexOption.IGNORE_CASE)
     private val METADATA_REGEX = Regex("""\[([a-zA-Z]+):[^]]*]""")
 
@@ -31,20 +30,17 @@ object LrcParser {
         }
         val offset = OFFSET_REGEX.find(raw)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
         val out = mutableListOf<LyricsLine>()
-        raw.lineSequence().forEach { line ->
+        raw.lineSequence().forEach lines@{ line ->
             val stamps = TIMESTAMP_REGEX.findAll(line).toList()
-            if (stamps.isEmpty()) return@forEach
-            // strip all [..] tags from the line to obtain pure text
-            val text = line.replace(METADATA_REGEX, "").trim()
-            // skip metadata-only lines: if after stripping there is nothing left AND
-            // any of the captured tags is metadata, treat as metadata-only.
-            val onlyMetadata = stamps.isEmpty() && METADATA_REGEX.findAll(line).any {
-                it.groupValues[1].lowercase() in METADATA_KEYS
-            }
-            if (onlyMetadata) return@forEach
-            stamps.forEach { m ->
-                val min = m.groupValues[1].toLongOrNull() ?: return@forEach
-                val sec = m.groupValues[2].toLongOrNull() ?: return@forEach
+            if (stamps.isEmpty()) return@lines
+            // Strip BOTH metadata tags AND timestamps to obtain the pure lyric text.
+            val text = line
+                .replace(METADATA_REGEX, "")
+                .replace(TIMESTAMP_REGEX, "")
+                .trim()
+            stamps.forEach stamp@{ m ->
+                val min = m.groupValues[1].toLongOrNull() ?: return@stamp
+                val sec = m.groupValues[2].toLongOrNull() ?: return@stamp
                 val fracRaw = m.groupValues[4]
                 val frac = when {
                     fracRaw.isEmpty() -> 0L
