@@ -80,13 +80,17 @@
 
         <!-- Car App Service: the SOLE Android Auto surface. Provides the
              custom multi-line karaoke screen via Car App Library
-             (PaneTemplate / LongMessageTemplate). -->
+             (PaneTemplate / LongMessageTemplate).
+
+             Category=POI because AA's launcher discovers POI apps in every
+             current AA host version; IOT was hit-or-miss across devices.
+             PaneTemplate is allowed in POI since Car App Library 1.4. -->
         <service
             android:name=".service.car.LyricsCarAppService"
             android:exported="true">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.IOT" />
+                <category android:name="androidx.car.app.category.POI" />
             </intent-filter>
         </service>
 

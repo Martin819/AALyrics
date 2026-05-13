@@ -154,10 +154,14 @@ pro phone-side use):
 <service android:name=".service.car.LyricsCarAppService" ...>
     <intent-filter>
         <action android:name="androidx.car.app.CarAppService"/>
-        <category android:name="androidx.car.app.category.IOT"/>
+        <category android:name="androidx.car.app.category.POI"/>
     </intent-filter>
 </service>
 ```
+
+Kategorie `POI` je v AA launcheru spolehlivě viditelná napříč verzemi
+(IOT bývá na některých zařízeních filtrovaná), a Car App Library 1.4+
+povoluje `PaneTemplate` i v této kategorii.
 
 A `automotive_app_desc.xml` přihlašuje pouze `template` use case:
 
