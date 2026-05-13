@@ -26,7 +26,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
@@ -43,7 +47,9 @@ fun KaraokeScreen(modifier: Modifier = Modifier, vm: KaraokeViewModel = hiltView
     val ui by vm.state.collectAsState()
     Column(modifier.fillMaxSize().padding(16.dp)) {
         Header(ui)
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(4.dp))
+        DebugStrip(ui)
+        Spacer(Modifier.height(8.dp))
         ProgressBar(ui)
         Spacer(Modifier.height(12.dp))
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -91,6 +97,41 @@ private fun Header(ui: LyricsController.UiState) {
             }
         }
     }
+}
+
+/**
+ * Tiny diagnostic strip below the header. Visible only in debug builds.
+ * Shows raw vs. interpolated position so we can see if MediaSession
+ * is reporting reasonable numbers from Spotify / YT Music.
+ */
+@Composable
+private fun DebugStrip(ui: LyricsController.UiState) {
+    if (!cz.aalyrics.BuildConfig.DEBUG) return
+    // Tick every 250 ms so the interpolated position keeps refreshing
+    // even when the activeLineIndex doesn't change.
+    var tick by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
+        while (true) { delay(250L); tick++ }
+    }
+    val pb = ui.playback
+    val rawPos = pb.positionMs
+    // Reading `tick` here makes Compose recompose every 250 ms so the
+    // interpolated position is always live.
+    val interpPos = run { tick; pb.currentPositionMs() }
+    val dur = pb.durationMs
+    val firstTs = ui.lyrics.lines.firstOrNull()?.timestampMs
+    val lastTs = ui.lyrics.lines.lastOrNull()?.timestampMs
+    val pkg = pb.song?.sourcePackage ?: "—"
+    Text(
+        text = "pkg=$pkg playing=${pb.isPlaying} dur=${dur}ms\n" +
+            "rawPos=${rawPos}ms interpPos=${interpPos}ms " +
+            "Δupdated=${System.currentTimeMillis() - pb.updatedAt}ms\n" +
+            "active=${ui.activeLineIndex}/${ui.lyrics.lines.size} " +
+            "lrc=[$firstTs … $lastTs]ms synced=${ui.lyrics.isSynced}",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.tertiary,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable

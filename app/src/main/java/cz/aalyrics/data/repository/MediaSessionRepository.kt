@@ -96,7 +96,12 @@ class MediaSessionRepository @Inject constructor(
     }
 
     private fun publishCurrent() {
-        val active = pickActive(controllerCallbacks.keys.toList())
+        // EXCLUDE our own session — KaraokeMediaService publishes a stub
+        // MediaSession that we'd otherwise read back from, causing a
+        // feedback loop with position == 0.
+        val ownPkg = context.packageName
+        val candidates = controllerCallbacks.keys.filter { it.packageName != ownPkg }
+        val active = pickActive(candidates)
         if (active == null) {
             _state.value = PlaybackState.Idle
             return
@@ -139,12 +144,23 @@ class MediaSessionRepository @Inject constructor(
 
     private fun pickActive(controllers: List<MediaController>): MediaController? {
         if (controllers.isEmpty()) return null
-        // prefer one that is actively playing
+        // 1) Actively playing wins.
         controllers.firstOrNull { it.playbackState?.state == SysPlaybackState.STATE_PLAYING }
             ?.let { return it }
-        // otherwise the one most recently updated
-        return controllers.maxByOrNull {
-            it.playbackState?.lastPositionUpdateTime ?: 0L
-        }
+        // 2) Buffering/connecting (about to play).
+        controllers.firstOrNull {
+            it.playbackState?.state in setOf(
+                SysPlaybackState.STATE_BUFFERING,
+                SysPlaybackState.STATE_CONNECTING,
+            )
+        }?.let { return it }
+        // 3) Paused with usable metadata — most recently updated.
+        return controllers
+            .filter {
+                val s = it.playbackState?.state ?: SysPlaybackState.STATE_NONE
+                it.metadata != null && s != SysPlaybackState.STATE_NONE &&
+                    s != SysPlaybackState.STATE_STOPPED && s != SysPlaybackState.STATE_ERROR
+            }
+            .maxByOrNull { it.playbackState?.lastPositionUpdateTime ?: 0L }
     }
 }
