@@ -20,6 +20,8 @@
 
     <string name="settings_offset">Korekce synchronizace (ms)</string>
     <string name="settings_prefer_synced">Preferovat synchronizovaný text</string>
+    <string name="settings_debug_overlay">Zobrazit diagnostický pruh</string>
+    <string name="settings_debug_overlay_desc">Na karaoke obrazovce ukazuje pozici, délku skladby a aktivní řádek — pro ladění synchronizace.</string>
     <string name="settings_clear_cache">Vymazat cache textů</string>
     <string name="settings_notification_permission">Přístup k notifikacím</string>
     <string name="settings_notification_grant">Otevřít systémové nastavení</string>

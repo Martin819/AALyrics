@@ -45,10 +45,13 @@ import cz.aalyrics.domain.LyricsController
 @Composable
 fun KaraokeScreen(modifier: Modifier = Modifier, vm: KaraokeViewModel = hiltViewModel()) {
     val ui by vm.state.collectAsState()
+    val showDebug by vm.debugOverlay.collectAsState()
     Column(modifier.fillMaxSize().padding(16.dp)) {
         Header(ui)
-        Spacer(Modifier.height(4.dp))
-        DebugStrip(ui)
+        if (showDebug) {
+            Spacer(Modifier.height(4.dp))
+            DebugStrip(ui)
+        }
         Spacer(Modifier.height(8.dp))
         ProgressBar(ui)
         Spacer(Modifier.height(12.dp))
@@ -100,13 +103,12 @@ private fun Header(ui: LyricsController.UiState) {
 }
 
 /**
- * Tiny diagnostic strip below the header. Visible only in debug builds.
- * Shows raw vs. interpolated position so we can see if MediaSession
- * is reporting reasonable numbers from Spotify / YT Music.
+ * Tiny diagnostic strip below the header. Shown when the user enables
+ * the "Debug overlay" switch in settings — useful for diagnosing
+ * MediaSession reporting issues from Spotify / YT Music.
  */
 @Composable
 private fun DebugStrip(ui: LyricsController.UiState) {
-    if (!cz.aalyrics.BuildConfig.DEBUG) return
     // Tick every 250 ms so the interpolated position keeps refreshing
     // even when the activeLineIndex doesn't change.
     var tick by remember { mutableLongStateOf(0L) }

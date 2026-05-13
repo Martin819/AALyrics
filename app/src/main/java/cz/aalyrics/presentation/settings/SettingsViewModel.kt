@@ -20,13 +20,18 @@ class SettingsViewModel @Inject constructor(
     data class UiState(
         val offsetMs: Long = 0L,
         val preferSynced: Boolean = true,
+        val debugOverlay: Boolean = false,
     )
 
-    val state = combine(settings.offsetMsFlow, settings.preferSyncedFlow) { o, p ->
-        UiState(o, p)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), UiState())
+    val state = combine(
+        settings.offsetMsFlow,
+        settings.preferSyncedFlow,
+        settings.debugOverlayFlow,
+    ) { o, p, d -> UiState(o, p, d) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000L), UiState())
 
     fun setOffset(value: Long) = viewModelScope.launch { settings.setOffsetMs(value) }
     fun setPreferSynced(v: Boolean) = viewModelScope.launch { settings.setPreferSynced(v) }
+    fun setDebugOverlay(v: Boolean) = viewModelScope.launch { settings.setDebugOverlay(v) }
     fun clearCache() = viewModelScope.launch { lyrics.clearCache() }
 }

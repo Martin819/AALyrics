@@ -19,9 +19,11 @@ class SettingsRepository @Inject constructor(
 ) {
     private val OFFSET = longPreferencesKey("sync_offset_ms")
     private val PREFER_SYNCED = booleanPreferencesKey("prefer_synced")
+    private val DEBUG_OVERLAY = booleanPreferencesKey("debug_overlay")
 
     val offsetMsFlow: Flow<Long> = context.dataStore.data.map { it[OFFSET] ?: 0L }
     val preferSyncedFlow: Flow<Boolean> = context.dataStore.data.map { it[PREFER_SYNCED] ?: true }
+    val debugOverlayFlow: Flow<Boolean> = context.dataStore.data.map { it[DEBUG_OVERLAY] ?: false }
 
     suspend fun setOffsetMs(value: Long) {
         val clamped = value.coerceIn(-5_000L, 5_000L)
@@ -30,5 +32,9 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setPreferSynced(value: Boolean) {
         context.dataStore.edit { it[PREFER_SYNCED] = value }
+    }
+
+    suspend fun setDebugOverlay(value: Boolean) {
+        context.dataStore.edit { it[DEBUG_OVERLAY] = value }
     }
 }

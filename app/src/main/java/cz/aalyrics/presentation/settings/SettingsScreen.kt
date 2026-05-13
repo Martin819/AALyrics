@@ -95,6 +95,25 @@ fun SettingsScreen(modifier: Modifier = Modifier, vm: SettingsViewModel = hiltVi
 
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(stringResource(R.string.settings_debug_overlay))
+                    Switch(checked = ui.debugOverlay, onCheckedChange = vm::setDebugOverlay)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.settings_debug_overlay_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
                 Text(stringResource(R.string.settings_aa_info_title),
                     style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
