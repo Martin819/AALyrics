@@ -16,6 +16,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
+import androidx.media3.exoplayer.source.ForwardingMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.SilenceMediaSource
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
@@ -286,17 +287,22 @@ class KaraokeMediaService : MediaLibraryService() {
         .build()
 
     /**
-     * Resolves every requested MediaItem to a [SilenceMediaSource]. The MediaItem
-     * we pass in carries our metadata; the URI is ignored (it's only there so
-     * ExoPlayer treats subsequent metadata-only replaceMediaItem calls
-     * efficiently).
+     * Resolves every requested MediaItem to a silent media source.
+     *
+     * Media3 1.4 keeps the (durationUs, MediaItem) SilenceMediaSource
+     * constructor private, so we wrap the public single-arg one in a
+     * [ForwardingMediaSource] and override [getMediaItem] to return the
+     * caller's MediaItem (with our metadata). ExoPlayer + MediaSession
+     * read the returned MediaItem when populating Now Playing.
      */
     private class SilenceOnlyMediaSourceFactory : MediaSource.Factory {
         override fun setDrmSessionManagerProvider(p: DrmSessionManagerProvider): MediaSource.Factory = this
         override fun setLoadErrorHandlingPolicy(p: LoadErrorHandlingPolicy): MediaSource.Factory = this
         override fun getSupportedTypes(): IntArray = intArrayOf(C.CONTENT_TYPE_OTHER)
         override fun createMediaSource(mediaItem: MediaItem): MediaSource =
-            SilenceMediaSource(SILENCE_DURATION_US, mediaItem)
+            object : ForwardingMediaSource(SilenceMediaSource(SILENCE_DURATION_US)) {
+                override fun getMediaItem(): MediaItem = mediaItem
+            }
     }
 
     // ─── Notification ────────────────────────────────────────────────────
