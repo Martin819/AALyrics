@@ -10,6 +10,7 @@ import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -69,7 +70,8 @@ class KaraokeMediaService : MediaLibraryService() {
 
     @Inject lateinit var controller: LyricsController
 
-    private lateinit var player: ExoPlayer
+    private lateinit var exoPlayer: ExoPlayer
+    private lateinit var sessionPlayer: Player
     private lateinit var session: MediaLibrarySession
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collectJob: Job? = null
@@ -78,7 +80,7 @@ class KaraokeMediaService : MediaLibraryService() {
         super.onCreate()
         controller.start()
 
-        player = ExoPlayer.Builder(this)
+        exoPlayer = ExoPlayer.Builder(this)
             .setMediaSourceFactory(SilenceOnlyMediaSourceFactory())
             // handleAudioFocus = false: we play silence, never want to duck
             // or pause the real music app.
@@ -92,13 +94,18 @@ class KaraokeMediaService : MediaLibraryService() {
                 prepare()
             }
 
+        // Wrap the ExoPlayer so transport-control commands routed at our
+        // session (steering wheel buttons, AA's on-screen play/pause/skip)
+        // are re-dispatched to the real music app's MediaController.
+        sessionPlayer = ForwardingControlPlayer(exoPlayer, controller.mediaSession)
+
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        session = MediaLibrarySession.Builder(this, player, LibraryCallback())
+        session = MediaLibrarySession.Builder(this, sessionPlayer, LibraryCallback())
             .setSessionActivity(pendingIntent)
             .build()
 
@@ -127,14 +134,14 @@ class KaraokeMediaService : MediaLibraryService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (!player.playWhenReady) stopSelf()
+        if (!exoPlayer.playWhenReady) stopSelf()
     }
 
     override fun onDestroy() {
         collectJob?.cancel()
         scope.cancel()
         session.release()
-        player.release()
+        exoPlayer.release()
         controller.stop()
         super.onDestroy()
     }
@@ -167,7 +174,7 @@ class KaraokeMediaService : MediaLibraryService() {
             .build()
         runCatching {
             // Same URI → ExoPlayer treats this as a metadata-only update.
-            player.replaceMediaItem(0, buildItem(NOW_PLAYING_ID, md))
+            exoPlayer.replaceMediaItem(0, buildItem(NOW_PLAYING_ID, md))
         }
 
         // 2) notify AA the browse tree changed → re-renders the list
@@ -241,6 +248,11 @@ class KaraokeMediaService : MediaLibraryService() {
      */
     private fun currentChildren(): List<MediaItem> {
         val ui = controller.state.value
+        // Include the song's cacheKey in every child's mediaId so AA can't
+        // reuse cached metadata from the previous song. Without this, AA
+        // sees identical IDs (line:0, line:1, …) across songs and serves
+        // stale titles at the top of the list.
+        val songTag = ui.playback.song?.cacheKey()?.hashCode()?.toString() ?: "idle"
         val lines = ui.lyrics.lines
         if (lines.isEmpty()) {
             val song = ui.playback.song
@@ -252,7 +264,7 @@ class KaraokeMediaService : MediaLibraryService() {
                 .setIsBrowsable(false)
                 .setIsPlayable(true)
                 .build()
-            return listOf(buildItem("placeholder", md))
+            return listOf(buildItem("placeholder:$songTag", md))
         }
         val active = ui.activeLineIndex.coerceAtLeast(0)
         // Show 2 lines above + active + 5 below = 8 items.
@@ -267,7 +279,7 @@ class KaraokeMediaService : MediaLibraryService() {
                 .setIsBrowsable(false)
                 .setIsPlayable(true)
                 .build()
-            buildItem("line:$i", md)
+            buildItem("line:$songTag:$i", md)
         }
     }
 
@@ -305,6 +317,65 @@ class KaraokeMediaService : MediaLibraryService() {
             object : WrappingMediaSource(SilenceMediaSource(SILENCE_DURATION_US)) {
                 override fun getMediaItem(): MediaItem = mediaItem
             }
+    }
+
+    /**
+     * Re-dispatches transport-control commands to the foreign music app
+     * (Spotify / YT Music) so AA's on-screen buttons and steering-wheel
+     * media keys keep controlling the real player even when our session
+     * is the one AA currently has focused. The underlying [exoPlayer]
+     * still receives the command too so our silent track stays in sync
+     * with what AA visually shows.
+     */
+    private class ForwardingControlPlayer(
+        base: Player,
+        private val media: cz.aalyrics.data.repository.MediaSessionRepository,
+    ) : ForwardingPlayer(base) {
+
+        override fun setPlayWhenReady(playWhenReady: Boolean) {
+            if (playWhenReady) media.dispatchPlay() else media.dispatchPause()
+            super.setPlayWhenReady(playWhenReady)
+        }
+
+        override fun play() {
+            media.dispatchPlay()
+            super.play()
+        }
+
+        override fun pause() {
+            media.dispatchPause()
+            super.pause()
+        }
+
+        override fun seekToNext() {
+            media.dispatchNext()
+            super.seekToNext()
+        }
+
+        override fun seekToNextMediaItem() {
+            media.dispatchNext()
+            super.seekToNextMediaItem()
+        }
+
+        override fun seekToPrevious() {
+            media.dispatchPrevious()
+            super.seekToPrevious()
+        }
+
+        override fun seekToPreviousMediaItem() {
+            media.dispatchPrevious()
+            super.seekToPreviousMediaItem()
+        }
+
+        override fun seekTo(positionMs: Long) {
+            media.dispatchSeekTo(positionMs)
+            super.seekTo(positionMs)
+        }
+
+        override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+            media.dispatchSeekTo(positionMs)
+            super.seekTo(mediaItemIndex, positionMs)
+        }
     }
 
     // ─── Notification ────────────────────────────────────────────────────

@@ -142,6 +142,39 @@ class MediaSessionRepository @Inject constructor(
         )
     }
 
+    // ─── Command forwarding ──────────────────────────────────────────────
+    // Our MediaSession (KaraokeMediaService) becomes the "currently active"
+    // one as soon as the user taps our app in Android Auto, so steering-
+    // wheel media keys and AA's transport controls flow into us — not the
+    // real music app. These helpers re-dispatch the command to whichever
+    // foreign controller is actually playing, so play/pause/skip on the
+    // wheel keep working with Spotify / YT Music.
+    private fun activeForeignController(): MediaController? {
+        val ownPkg = context.packageName
+        val candidates = controllerCallbacks.keys.filter { it.packageName != ownPkg }
+        return pickActive(candidates)
+    }
+
+    fun dispatchPlay() {
+        runCatching { activeForeignController()?.transportControls?.play() }
+    }
+
+    fun dispatchPause() {
+        runCatching { activeForeignController()?.transportControls?.pause() }
+    }
+
+    fun dispatchNext() {
+        runCatching { activeForeignController()?.transportControls?.skipToNext() }
+    }
+
+    fun dispatchPrevious() {
+        runCatching { activeForeignController()?.transportControls?.skipToPrevious() }
+    }
+
+    fun dispatchSeekTo(positionMs: Long) {
+        runCatching { activeForeignController()?.transportControls?.seekTo(positionMs) }
+    }
+
     private fun pickActive(controllers: List<MediaController>): MediaController? {
         if (controllers.isEmpty()) return null
         // 1) Actively playing wins.
