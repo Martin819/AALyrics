@@ -89,6 +89,8 @@
         <service
             android:name=".service.car.LyricsCarAppService"
             android:exported="true"
+            android:icon="@drawable/ic_lyrics"
+            android:label="@string/app_name"
             android:foregroundServiceType="connectedDevice">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
