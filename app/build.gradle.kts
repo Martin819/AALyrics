@@ -106,19 +106,12 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
 
-    // Media3
+    // Media
     implementation("androidx.media3:media3-exoplayer:1.4.0")
     implementation("androidx.media3:media3-session:1.4.0")
     implementation("androidx.media3:media3-common:1.4.0")
     implementation("androidx.media3:media3-ui:1.4.0")
     implementation("androidx.media:media:1.7.0")
-
-    // Car App Library (Android Auto custom screens — multi-line lyrics workaround).
-    // Track the latest RC because consumer Android Auto on Pixel + Android 16
-    // (AA 16.x) has been observed silently filtering out apps built against
-    // older library versions.
-    implementation("androidx.car.app:app:1.7.0-rc01")
-    implementation("androidx.car.app:app-projected:1.7.0-rc01")
 
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")

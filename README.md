@@ -73,12 +73,8 @@ app/
 │   └── settings/       SettingsScreen + ViewModel
 ├── service/
 │   ├── MediaNotificationListener      NotificationListenerService → MEDIA_CONTENT_CONTROL
-│   ├── KaraokeMediaService            Media3 MediaLibraryService → standardní AA media UI
-│   └── car/
-│       ├── LyricsCarAppService        Car App Library service (NEstandardní AA UI)
-│       ├── LyricsCarSession
-│       └── LyricsCarScreen            PaneTemplate / LongMessageTemplate s víceřádkovým textem
-├── di/                 AppModule (Hilt), CarEntryPoint
+│   └── KaraokeMediaService            Media3 MediaLibraryService → AA browse-tree lyrics
+├── di/                 AppModule (Hilt)
 └── ui/theme/           Material 3
 ```
 
@@ -98,8 +94,8 @@ app/
               (LRCLIB → Lyrics.ovh → Room cache)                    │
                             │                  ┌─────────┬──────────┴───────────┐
                             ▼                  ▼         ▼                      ▼
-                       SyncedLyrics       KaraokeScreen  KaraokeMediaService    LyricsCarScreen
-                                          (Compose)      (notifikace, phone)    (CarAppLib → AA)
+                       SyncedLyrics       KaraokeScreen     KaraokeMediaService
+                                          (Compose, phone)  (notif. + AA browse tree)
 ```
 
 Všechny tři "konzumenty" stavu (Compose UI, Media3 session, CarAppService)
@@ -110,89 +106,74 @@ stejný řádek textu.
 
 ## Android Auto — jak obejít omezení jednoho řádku
 
-Standardní cesta pro media aplikace v Android Auto je
-`MediaBrowserService` + `MediaSession`. Auto rendruje jeho metadata
-vlastním fixním layoutem a zobrazí jen jeden řádek subtitle / description
-— víc tam dostat nelze. Navíc tato cesta předpokládá, že naše aplikace
-umí hrát audio: jakmile uživatel klikne na položku, Auto pošle
-`play` našemu Playeru. My ale audio nevlastníme — jen pozorujeme
-MediaSession Spotify / YT Music — takže by každé kliknutí skončilo
-`"Could not load your selection"`.
+Pokoušeli jsme se použít Car App Library (`androidx.car.app`) s
+`PaneTemplate` / `LongMessageTemplate` pro víceřádkový text. Sample od
+Googlu funguje, ale **konsumer AA 16.x na Pixel 9 Pro + Android 16
+sideloaded templated aplikace tiše filtruje** — náš package byl v AA
+*Version and permissions* viditelný, ale v *Customize launcher* nikdy
+nepřibyl, nezávisle na kategorii (POI, IOT, NAVIGATION), permissions
+nebo verzi knihovny. To je gate na straně AA hosta, který bez Play
+Store enrollmentu nepřekročíme.
 
-**Aplikace proto v Android Auto vystavuje pouze "templated" vchod:**
-`LyricsCarAppService`, postavený na **Car App Library**
-(`androidx.car.app`). Tato knihovna je druhý oficiálně podporovaný
-způsob doručení UI do Android Auto a umožňuje deklarovat templates,
-mezi nimiž jsou `PaneTemplate` a `LongMessageTemplate` schopné zobrazit
-větší blok textu.
+**Místo toho používáme media surface a víceřádkový text doručujeme
+přes browse tree:**
 
-V Auto launcheru najdete jedinou dlaždici:
+`KaraokeMediaService` je `MediaLibraryService` který v `onGetChildren`
+vrátí **okno řádků textu** kolem aktuálního (8 položek, 2 nad aktivním
++ aktivní + 5 pod). Každý řádek je `MediaItem` s `isPlayable=true`,
+aktivní řádek má prefix "▶ ". AA renderuje children root-u jako
+scrollovatelný seznam, takže uživatel reálně vidí víc řádků naráz.
 
-* **AA Lyrics** (řízeno `LyricsCarAppService`) v sekci *Apps* — vlastní
-  obrazovka s okolím aktuálního řádku (do 6 řádků zvýrazněných v
-  `PaneTemplate`, aktivní řádek tučně a barevně). Při velmi dlouhých
-  textech přepneme na `LongMessageTemplate`, který v Auto poskytne
-  scrollovatelný blok textu.
+Při změně aktivního řádku zavoláme `session.notifyChildrenChanged(ROOT_ID, …)`
+a AA si seznam znovu vyžádá. Současně přepíšeme metadata player-u na
+aktivní řádek (`player.replaceMediaItem(0, …)` se stejnou URI — Media3
+to optimalizuje na metadata-only update bez znovunabití zdroje), takže
+i AA "Now Playing" karta drží aktuální řádek.
 
-`KaraokeMediaService` (MediaLibraryService) je sice v projektu pořád,
-ale jen pro **phone-side** účely — drží foreground proces a zobrazuje
-notifikaci s aktuálním řádkem. `automotive_app_desc.xml` opt-in pro
-`media` use case je vypnut, takže AA ho neprobuje.
+### Tap na položku nevolá "Could not load"
 
-`LyricsCarScreen` se přihlásí k `LyricsController.state` a při změně
-aktivního řádku zavolá `invalidate()` — host Auto si template znovu
-vyžádá. Refresh frekvenci nicméně limituje samo Auto kvůli rozptylování
-řidiče; vizuální posuv tedy NENÍ frame-perfect, ale uživatel vidí
-~3 sekundové okno před aktivním řádkem a několik za ním (`PaneTemplate`),
-což je v karaoke kontextu naprosto použitelné. V parkujícím stavu Auto
-dovolí i `LongMessageTemplate`, který zobrazí komplet text.
+Náš ExoPlayer používá vlastní `SilenceOnlyMediaSourceFactory`, která
+každý `MediaItem` resolvuje na `SilenceMediaSource` (60 s ticha v
+loopu). Konfigurace `setAudioAttributes(AudioAttributes.DEFAULT,
+handleAudioFocus = false)` zajišťuje, že náš player **nikdy
+neukrade audio focus** od Spotify / YT Music — ten dál hraje hudbu,
+my "hrajeme" ticho jen kvůli AA contract. Takže tap v AA proběhne
+úspěšně (`STATE_PLAYING`), žádný *Could not load your selection*.
 
-Manifest deklaruje jen CarAppService pro AA (Media service zůstává jen
-pro phone-side use):
+### Manifest
 
 ```xml
-<service android:name=".service.car.LyricsCarAppService" ...>
+<service android:name=".service.KaraokeMediaService"
+    android:foregroundServiceType="mediaPlayback"
+    android:exported="true">
     <intent-filter>
-        <action android:name="androidx.car.app.CarAppService"/>
-        <category android:name="androidx.car.app.category.POI"/>
+        <action android:name="androidx.media3.session.MediaLibraryService"/>
+        <action android:name="android.media.browse.MediaBrowserService"/>
     </intent-filter>
 </service>
 ```
 
-Kategorie `POI` je v AA launcheru spolehlivě viditelná napříč verzemi
-(IOT bývá na některých zařízeních filtrovaná), a Car App Library 1.4+
-povoluje `PaneTemplate` i v této kategorii.
-
-A `automotive_app_desc.xml` přihlašuje pouze `template` use case:
-
 ```xml
 <automotiveApp>
-    <uses name="template"/>
+    <uses name="media"/>
 </automotiveApp>
 ```
 
 ### Jak aplikaci v Auto poprvé najít
 
 Android Auto schovává sideloaded aplikace. Aby se *AA Lyrics* v
-launcheru ukázala:
+*Customize launcher* objevila:
 
 1. *Settings → Apps → Android Auto → Open settings → Version* (10× klik)
 2. Vpravo nahoře 3 tečky → *Developer settings → Unknown sources* zapnout
-3. Force-stop Android Auto, znovu otevřít → v *Apps* sekci se objeví
-   "AA Lyrics".
-
-> **Pozn.:** Druhá služba zde běží v kategorii `IOT`, která je ze všech
-> kategorií Car App Library nejméně restriktivní a nevyžaduje žádné
-> speciální oprávnění od Google před publikací do Play. Pro produkci je
-> možné požádat o `category.MEDIA` a/nebo zúžit `HostValidator` z
-> `ALLOW_ALL_HOSTS_VALIDATOR` na vrácený šablonový validator.
+3. Force-stop Android Auto, znovu otevřít → v *Customize launcher* se
+   objeví "AA Lyrics".
 
 ---
 
 ## Použité knihovny
 
-* AndroidX Media3 (ExoPlayer, MediaSession, MediaLibraryService)
-* AndroidX Car App Library 1.4 (`androidx.car.app:app`, `app-projected`)
+* AndroidX Media3 (ExoPlayer + `SilenceMediaSource`, MediaSession, MediaLibraryService)
 * Hilt 2.51
 * Retrofit 2 + Moshi
 * Room 2.6

@@ -1,14 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  We only expose a templated Car App (LyricsCarAppService) to Android Auto.
-  The "media" use case is intentionally omitted: this app does not play
-  audio, it just observes another app's MediaSession to fetch and display
-  lyrics — so a media-browse tree would either need fake "playable" items
-  (which produce "Could not load your selection" when tapped, since we
-  have no audio source) or a stub silent-audio Player. Both feel worse
-  than just routing the user to the templated multi-line lyrics screen
-  via AA "Apps".
+  Only "media" use case. We tried "template" with a CarAppService for
+  multi-line lyrics, but AA 16.x on Pixel + Android 16 silently filters
+  sideloaded templated apps regardless of category. The media surface is
+  what AA actually shows, so we expose lyrics as a MediaBrowserService
+  browse tree instead — see KaraokeMediaService.
 -->
 <automotiveApp>
-    <uses name="template" />
+    <uses name="media" />
 </automotiveApp>

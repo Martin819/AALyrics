@@ -6,17 +6,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
-    <!-- Car App Library permissions. We don't actually render onto the car
-         surface or use navigation/map templates, but Google's own Showcase
-         sample declares these and consumer Android Auto on Pixel + Android 16
-         appears to gate templated-app discovery on at least one of them being
-         present. Cheap to declare. -->
-    <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
-    <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
-    <uses-permission android:name="androidx.car.app.MAP_TEMPLATES" />
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL"
@@ -41,7 +31,7 @@
         android:largeHeap="true"
         tools:targetApi="31">
 
-        <!-- Android Auto descriptor -->
+        <!-- Android Auto descriptor — declares the "media" use case only. -->
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
@@ -62,7 +52,8 @@
             </intent-filter>
         </activity>
 
-        <!-- NotificationListenerService — fallback for reading media notifications -->
+        <!-- NotificationListenerService — gives us MEDIA_CONTENT_CONTROL so
+             we can enumerate active MediaSessions (Spotify, YT Music…). -->
         <service
             android:name=".service.MediaNotificationListener"
             android:exported="true"
@@ -73,11 +64,10 @@
             </intent-filter>
         </service>
 
-        <!-- Foreground service that holds the MediaSession we use ON THE PHONE
-             (notification, observing playback from Spotify / YT Music). We do
-             NOT expose this to Android Auto — see automotive_app_desc.xml — because
-             we don't actually play audio and AA's media template requires playable
-             items. Lyrics in AA are delivered via LyricsCarAppService below. -->
+        <!-- Foreground MediaLibraryService — exposed to Android Auto.
+             We don't actually play audio: a silent ExoPlayer satisfies the
+             AA play contract while we publish observed Spotify/YT Music
+             metadata + lyrics as a browse tree. See KaraokeMediaService. -->
         <service
             android:name=".service.KaraokeMediaService"
             android:exported="true"
@@ -87,33 +77,6 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
-
-        <!-- Car App Service: the SOLE Android Auto surface. Provides the
-             custom multi-line karaoke screen via Car App Library
-             (PaneTemplate / LongMessageTemplate).
-
-             Category=POI because AA's launcher discovers POI apps in every
-             current AA host version; IOT was hit-or-miss across devices.
-             PaneTemplate is allowed in POI since Car App Library 1.4. -->
-        <service
-            android:name=".service.car.LyricsCarAppService"
-            android:exported="true"
-            android:icon="@drawable/ic_lyrics"
-            android:label="@string/app_name"
-            android:foregroundServiceType="connectedDevice">
-            <!-- One intent-filter only, matching Google's HelloWorld sample.
-                 Some AA hosts (notably AA 16.x on Pixel) silently skip
-                 services that declare multiple intent-filters with the same
-                 action but different categories. -->
-            <intent-filter>
-                <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.POI" />
-            </intent-filter>
-        </service>
-
-        <meta-data
-            android:name="androidx.car.app.minCarApiLevel"
-            android:value="1" />
 
     </application>
 </manifest>

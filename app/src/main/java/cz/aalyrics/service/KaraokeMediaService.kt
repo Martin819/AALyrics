@@ -4,15 +4,21 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import androidx.annotation.OptIn
 import androidx.core.app.NotificationCompat
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.drm.DrmSessionManagerProvider
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.SilenceMediaSource
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
@@ -21,34 +27,40 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import cz.aalyrics.R
 import cz.aalyrics.domain.LyricsController
-import cz.aalyrics.domain.model.PlaybackState as DomainPlayback
 import cz.aalyrics.presentation.MainActivity
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlin.math.max
+import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 
 /**
- * Foreground MediaLibraryService.
+ * Foreground media service exposed to Android Auto.
  *
- * Two responsibilities:
- *  1. Keep the app alive in the background while we observe playback from
- *     other apps (Spotify, YT Music). The service shows a foreground
- *     notification with the active lyric line.
- *  2. Expose a MediaSession + media browser tree to Android Auto. The
- *     metadata is mirrored from the LyricsController state, so the standard
- *     Auto media UI shows track info and the CURRENT lyric line as
- *     DISPLAY_DESCRIPTION. (Multi-line view is provided by
- *     LyricsCarAppService — see service/car/.)
+ *  - Wraps a silent [ExoPlayer] (handleAudioFocus = false) so the AA host can
+ *    issue play/pause without ever stealing focus from the real music app
+ *    (Spotify, YT Music). Tap on our entry in AA never produces "Could not
+ *    load your selection" anymore.
+ *  - Exposes the active song and a sliding window of lyric lines as a
+ *    [MediaLibraryService] browse tree. AA renders the children of the root
+ *    as a scrollable list, so the user effectively sees multiple lyric
+ *    lines in the car — the active line is prefixed with "▶ ".
+ *  - Mirrors the active line into the player's media-item metadata, so the
+ *    AA "Now Playing" card also reflects the current line.
  *
- *  Note on the player: we don't actually play audio. The injected
- *  ExoPlayer is in an idle state — it's only there to satisfy the
- *  MediaSession contract.
+ *  The Car App Library "templated" path was attempted earlier but consumer
+ *  AA 16.x on Pixel + Android 16 silently filters sideloaded templated apps
+ *  out of the launcher regardless of category / permissions / library
+ *  version. The media browse approach is the only AA surface we can
+ *  reliably get visibility for.
  */
 @AndroidEntryPoint
 @OptIn(UnstableApi::class)
@@ -65,9 +77,19 @@ class KaraokeMediaService : MediaLibraryService() {
         super.onCreate()
         controller.start()
 
-        player = ExoPlayer.Builder(this).build().apply {
-            playWhenReady = false
-        }
+        player = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(SilenceOnlyMediaSourceFactory())
+            // handleAudioFocus = false: we play silence, never want to duck
+            // or pause the real music app.
+            .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus */ false)
+            .setHandleAudioBecomingNoisy(false)
+            .build()
+            .apply {
+                volume = 0f
+                repeatMode = Player.REPEAT_MODE_ALL
+                setMediaItem(buildItem(NOW_PLAYING_ID, idleMetadata()))
+                prepare()
+            }
 
         val pendingIntent = PendingIntent.getActivity(
             this, 0,
@@ -75,68 +97,30 @@ class KaraokeMediaService : MediaLibraryService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        session = MediaLibrarySession.Builder(
-            this, player,
-            object : MediaLibrarySession.Callback {
-                override fun onGetLibraryRoot(
-                    session: MediaLibrarySession,
-                    browser: MediaSession.ControllerInfo,
-                    params: LibraryParams?,
-                ): ListenableFuture<LibraryResult<MediaItem>> {
-                    val root = MediaItem.Builder()
-                        .setMediaId(ROOT_ID)
-                        .setMediaMetadata(
-                            MediaMetadata.Builder()
-                                .setTitle(getString(R.string.app_name))
-                                .setIsBrowsable(true)
-                                .setIsPlayable(false)
-                                .build(),
-                        ).build()
-                    return Futures.immediateFuture(LibraryResult.ofItem(root, params))
-                }
-
-                override fun onGetChildren(
-                    session: MediaLibrarySession,
-                    browser: MediaSession.ControllerInfo,
-                    parentId: String,
-                    page: Int, pageSize: Int,
-                    params: LibraryParams?,
-                ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-                    val cur = controller.state.value
-                    val items = mutableListOf<MediaItem>()
-                    cur.playback.song?.let { s ->
-                        items += MediaItem.Builder()
-                            .setMediaId(NOW_PLAYING_ID)
-                            .setMediaMetadata(
-                                MediaMetadata.Builder()
-                                    .setTitle(s.title)
-                                    .setArtist(s.artist)
-                                    .setAlbumTitle(s.album)
-                                    .setDescription(cur.activeLine ?: getString(R.string.car_no_lyrics))
-                                    .setIsBrowsable(false)
-                                    .setIsPlayable(true)
-                                    .build(),
-                            ).build()
-                    }
-                    return Futures.immediateFuture(
-                        LibraryResult.ofItemList(ImmutableList.copyOf(items), params),
-                    )
-                }
-            },
-        )
+        session = MediaLibrarySession.Builder(this, player, LibraryCallback())
             .setSessionActivity(pendingIntent)
             .build()
 
         ensureChannel()
         startForeground(NOTIFICATION_ID, buildIdleNotification())
 
-        // Sync controller → MediaSession metadata so Android Auto sees the active line.
-        collectJob = scope.launch {
-            controller.state.collectLatest { ui ->
-                updateSessionMetadata(ui)
-                updateNotification(ui)
+        // Push UI state changes to both the browse tree (notifyChildrenChanged)
+        // and the player's metadata (replaceMediaItem) so AA's two surfaces
+        // — list view and Now Playing card — stay in sync.
+        collectJob = controller.state
+            .map { snapshot ->
+                Snapshot(
+                    cacheKey = snapshot.playback.song?.cacheKey(),
+                    activeLine = snapshot.activeLine,
+                    activeIndex = snapshot.activeLineIndex,
+                    songTitle = snapshot.playback.song?.title,
+                    songArtist = snapshot.playback.song?.artist,
+                    totalLines = snapshot.lyrics.lines.size,
+                )
             }
-        }
+            .distinctUntilChanged()
+            .onEach(::onSnapshot)
+            .launchIn(scope)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
@@ -154,50 +138,168 @@ class KaraokeMediaService : MediaLibraryService() {
         super.onDestroy()
     }
 
-    private fun updateSessionMetadata(ui: LyricsController.UiState) {
-        val s = ui.playback.song ?: run {
-            val empty = MediaItem.Builder()
-                .setMediaId(NOW_PLAYING_ID)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(getString(R.string.car_no_song))
-                        .build(),
-                ).build()
-            runCatching {
-                player.setMediaItem(empty)
-                player.prepare()
-            }
-            return
+    // ─── Snapshot of state we care about for AA updates ──────────────────
+    private data class Snapshot(
+        val cacheKey: String?,
+        val activeLine: String?,
+        val activeIndex: Int,
+        val songTitle: String?,
+        val songArtist: String?,
+        val totalLines: Int,
+    )
+
+    private fun onSnapshot(s: Snapshot) {
+        // 1) update player's current item metadata → Now Playing card
+        val title = when {
+            s.activeLine != null -> "▶ ${s.activeLine}"
+            s.songTitle != null -> s.songTitle
+            else -> getString(R.string.car_no_song)
         }
+        val subtitle = listOfNotNull(s.songTitle, s.songArtist).joinToString(" — ")
+            .ifBlank { getString(R.string.app_name) }
         val md = MediaMetadata.Builder()
-            .setTitle(s.title)
-            .setArtist(s.artist)
-            .setAlbumTitle(s.album)
-            .setDescription(ui.activeLine ?: getString(R.string.car_no_lyrics))
-            // Subtitle is rendered as second line in some Auto contexts.
-            .setSubtitle(ui.activeLine ?: s.artist)
-            .setExtras(
-                Bundle().apply {
-                    putString(EXTRA_FULL_LYRICS, ui.lyrics.lines.joinToString("\n") { it.text })
-                    putInt(EXTRA_ACTIVE_LINE, ui.activeLineIndex)
-                },
-            )
+            .setTitle(title)
+            .setSubtitle(subtitle)
+            .setArtist(s.songArtist)
+            .setAlbumTitle(s.songTitle)
+            .setDescription(s.activeLine ?: getString(R.string.car_no_lyrics))
             .build()
         runCatching {
-            val item = MediaItem.Builder()
-                .setMediaId(NOW_PLAYING_ID)
-                .setMediaMetadata(md)
-                .build()
-            player.setMediaItem(item)
-            player.prepare()
+            // Same URI → ExoPlayer treats this as a metadata-only update.
+            player.replaceMediaItem(0, buildItem(NOW_PLAYING_ID, md))
+        }
+
+        // 2) notify AA the browse tree changed → re-renders the list
+        runCatching {
+            session.notifyChildrenChanged(ROOT_ID, max(s.totalLines, 1), null)
+        }
+
+        // 3) phone-side foreground notification
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIFICATION_ID, buildLyricsNotification(s))
+    }
+
+    // ─── Browse tree ─────────────────────────────────────────────────────
+    private inner class LibraryCallback : MediaLibrarySession.Callback {
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            val root = MediaItem.Builder()
+                .setMediaId(ROOT_ID)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(getString(R.string.app_name))
+                        .setIsBrowsable(true)
+                        .setIsPlayable(false)
+                        .build(),
+                ).build()
+            return Futures.immediateFuture(LibraryResult.ofItem(root, params))
+        }
+
+        override fun onGetChildren(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            page: Int, pageSize: Int,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+            if (parentId != ROOT_ID) {
+                return Futures.immediateFuture(
+                    LibraryResult.ofItemList(ImmutableList.of(), params),
+                )
+            }
+            val items = currentChildren()
+            return Futures.immediateFuture(
+                LibraryResult.ofItemList(ImmutableList.copyOf(items), params),
+            )
+        }
+
+        override fun onGetItem(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            mediaId: String,
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            val items = currentChildren()
+            val match = items.firstOrNull { it.mediaId == mediaId }
+                ?: return Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
+            return Futures.immediateFuture(LibraryResult.ofItem(match, null))
         }
     }
 
-    private fun updateNotification(ui: LyricsController.UiState) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildLyricsNotification(ui))
+    /**
+     * Current browse-tree children: a sliding window of lyric lines around
+     * the active one. Each line is exposed as a playable item that resolves
+     * (via SilenceOnlyMediaSourceFactory) to a silent media source — so
+     * tapping any row in AA never produces a playback error.
+     *
+     * AA's media browse list is limited by driver-distraction guidelines to
+     * a small handful of items per screen; we cap at WINDOW_SIZE around the
+     * active line so the user always sees the now-playing context.
+     */
+    private fun currentChildren(): List<MediaItem> {
+        val ui = controller.state.value
+        val lines = ui.lyrics.lines
+        if (lines.isEmpty()) {
+            val song = ui.playback.song
+            val title = song?.let { "${it.title} — ${it.artist}" }
+                ?: getString(R.string.car_no_song)
+            val md = MediaMetadata.Builder()
+                .setTitle(title)
+                .setSubtitle(getString(R.string.car_no_lyrics))
+                .setIsBrowsable(false)
+                .setIsPlayable(true)
+                .build()
+            return listOf(buildItem("placeholder", md))
+        }
+        val active = ui.activeLineIndex.coerceAtLeast(0)
+        // Show 2 lines above + active + 5 below = 8 items.
+        val from = max(0, active - 2)
+        val to = min(lines.size, from + WINDOW_SIZE)
+        return (from until to).map { i ->
+            val line = lines[i]
+            val display = if (i == active) "▶ ${line.text}" else line.text
+            val md = MediaMetadata.Builder()
+                .setTitle(display.ifBlank { "♪" })
+                .setSubtitle(ui.playback.song?.let { "${it.title} — ${it.artist}" })
+                .setIsBrowsable(false)
+                .setIsPlayable(true)
+                .build()
+            buildItem("line:$i", md)
+        }
     }
 
+    // ─── MediaItem / silence plumbing ────────────────────────────────────
+    private fun buildItem(id: String, metadata: MediaMetadata): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(id)
+            // A fixed URI: ExoPlayer treats replaceMediaItem with the same
+            // URI as a metadata-only update (no source rebuild).
+            .setUri(SILENCE_URI)
+            .setMediaMetadata(metadata)
+            .build()
+
+    private fun idleMetadata() = MediaMetadata.Builder()
+        .setTitle(getString(R.string.app_name))
+        .setSubtitle(getString(R.string.car_no_song))
+        .build()
+
+    /**
+     * Resolves every requested MediaItem to a [SilenceMediaSource]. The MediaItem
+     * we pass in carries our metadata; the URI is ignored (it's only there so
+     * ExoPlayer treats subsequent metadata-only replaceMediaItem calls
+     * efficiently).
+     */
+    private class SilenceOnlyMediaSourceFactory : MediaSource.Factory {
+        override fun setDrmSessionManagerProvider(p: DrmSessionManagerProvider): MediaSource.Factory = this
+        override fun setLoadErrorHandlingPolicy(p: LoadErrorHandlingPolicy): MediaSource.Factory = this
+        override fun getSupportedTypes(): IntArray = intArrayOf(C.CONTENT_TYPE_OTHER)
+        override fun createMediaSource(mediaItem: MediaItem): MediaSource =
+            SilenceMediaSource(SILENCE_DURATION_US, mediaItem)
+    }
+
+    // ─── Notification ────────────────────────────────────────────────────
     private fun buildIdleNotification() = NotificationCompat.Builder(this, CHANNEL_ID)
         .setSmallIcon(R.drawable.ic_lyrics)
         .setContentTitle(getString(R.string.notification_title_idle))
@@ -213,15 +315,15 @@ class KaraokeMediaService : MediaLibraryService() {
         )
         .build()
 
-    private fun buildLyricsNotification(ui: LyricsController.UiState) =
+    private fun buildLyricsNotification(s: Snapshot) =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_lyrics)
             .setContentTitle(
-                ui.playback.song?.let { "${it.title} – ${it.artist}" }
-                    ?: getString(R.string.notification_title_idle),
+                listOfNotNull(s.songTitle, s.songArtist).joinToString(" – ")
+                    .ifBlank { getString(R.string.notification_title_idle) },
             )
-            .setContentText(ui.activeLine ?: getString(R.string.car_no_lyrics))
-            .setStyle(NotificationCompat.BigTextStyle().bigText(ui.activeLine ?: ""))
+            .setContentText(s.activeLine ?: getString(R.string.car_no_lyrics))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(s.activeLine ?: ""))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(
@@ -254,9 +356,10 @@ class KaraokeMediaService : MediaLibraryService() {
     companion object {
         const val ROOT_ID = "root"
         const val NOW_PLAYING_ID = "now_playing"
-        const val EXTRA_FULL_LYRICS = "cz.aalyrics.FULL_LYRICS"
-        const val EXTRA_ACTIVE_LINE = "cz.aalyrics.ACTIVE_LINE"
         private const val CHANNEL_ID = "karaoke_sync"
         private const val NOTIFICATION_ID = 0xAA
+        private const val WINDOW_SIZE = 8
+        private const val SILENCE_DURATION_US = 60_000_000L  // 60 s, looped
+        private val SILENCE_URI: Uri = Uri.parse("silence://now")
     }
 }
