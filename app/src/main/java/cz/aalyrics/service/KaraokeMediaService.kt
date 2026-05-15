@@ -39,10 +39,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
 
 /**
  * Foreground media service exposed to Android Auto.
@@ -75,6 +77,11 @@ class KaraokeMediaService : MediaLibraryService() {
     private lateinit var session: MediaLibrarySession
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var collectJob: Job? = null
+    private var browseTicker: Job? = null
+    // ControllerInfo of each browser that's currently subscribed to ROOT_ID.
+    // We forward notifyChildrenChanged to them explicitly because the
+    // broadcast variant has been observed to be silently de-duped by AA.
+    private val rootSubscribers = mutableSetOf<MediaSession.ControllerInfo>()
 
     override fun onCreate() {
         super.onCreate()
@@ -129,6 +136,18 @@ class KaraokeMediaService : MediaLibraryService() {
             .distinctUntilChanged()
             .onEach(::onSnapshot)
             .launchIn(scope)
+
+        // Belt-and-suspenders refresh ticker. AA caches browse children
+        // aggressively and notifyChildrenChanged on state change alone has
+        // proven unreliable in practice. Tickle the subscribers every 1.5 s
+        // so the visible list catches up even when AA decides to ignore a
+        // single notify call.
+        browseTicker = scope.launch {
+            while (true) {
+                delay(1_500L)
+                notifyBrowseChanged()
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
@@ -178,13 +197,36 @@ class KaraokeMediaService : MediaLibraryService() {
         }
 
         // 2) notify AA the browse tree changed → re-renders the list
-        runCatching {
-            session.notifyChildrenChanged(ROOT_ID, max(s.totalLines, 1), null)
-        }
+        notifyBrowseChanged()
 
         // 3) phone-side foreground notification
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildLyricsNotification(s))
+    }
+
+    /**
+     * Re-emits notifyChildrenChanged through every channel we have:
+     *  - per-subscribed-browser (more reliable than the broadcast variant in
+     *    practice; AA dedupes broadcast notifications aggressively),
+     *  - global broadcast as a fallback.
+     *
+     * Each call carries a fresh timestamp in LibraryParams.extras so that
+     * hosts comparing successive params see a different bundle and don't
+     * filter the call out as duplicate.
+     */
+    private fun notifyBrowseChanged() {
+        val itemCount = currentChildren().size.coerceAtLeast(1)
+        val params = androidx.media3.session.MediaLibraryService.LibraryParams.Builder()
+            .setExtras(android.os.Bundle().apply {
+                putLong("ts", System.currentTimeMillis())
+            })
+            .build()
+        runCatching {
+            rootSubscribers.toList().forEach { browser ->
+                session.notifyChildrenChanged(browser, ROOT_ID, itemCount, params)
+            }
+            session.notifyChildrenChanged(ROOT_ID, itemCount, params)
+        }
     }
 
     // ─── Browse tree ─────────────────────────────────────────────────────
@@ -233,6 +275,32 @@ class KaraokeMediaService : MediaLibraryService() {
             val match = items.firstOrNull { it.mediaId == mediaId }
                 ?: return Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE))
             return Futures.immediateFuture(LibraryResult.ofItem(match, null))
+        }
+
+        override fun onSubscribe(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<Void>> {
+            if (parentId == ROOT_ID) rootSubscribers += browser
+            return Futures.immediateFuture(LibraryResult.ofVoid())
+        }
+
+        override fun onUnsubscribe(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+        ): ListenableFuture<LibraryResult<Void>> {
+            if (parentId == ROOT_ID) rootSubscribers -= browser
+            return Futures.immediateFuture(LibraryResult.ofVoid())
+        }
+
+        override fun onDisconnected(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ) {
+            rootSubscribers -= controller
         }
     }
 
